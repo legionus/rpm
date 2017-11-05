@@ -33,6 +33,9 @@ static rpmRC checkEpoch(const char *s, char **emsg)
     if (!sep)
 	return RPMRC_OK;
 
+    if (strncmp(s, "set:", sizeof("set:") - 1) == 0)
+	return RPMRC_OK;
+
     for (si = s; si != sep; si++) {
 	if (!risdigit(*si)) {
 	    rasprintf(emsg, "Invalid version (epoch must be unsigned integer): %s", s);
