@@ -76,6 +76,8 @@ Makefile.in.in
 /rpmsign
 /rpmsort
 /rpmspec
+/dump_ld_config
+/mkset
 /scripts/macros.perl
 /scripts/macros.php
 /scripts/macros.python

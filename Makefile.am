@@ -183,6 +183,13 @@ rpmlibexec_PROGRAMS +=	rpmdeps
 rpmdeps_SOURCES =	tools/rpmdeps.c
 rpmdeps_LDADD =		lib/librpm.la rpmio/librpmio.la build/librpmbuild.la @WITH_POPT_LIB@
 
+rpmlibexec_PROGRAMS +=	dump_ld_config
+dump_ld_config_SOURCES = tools/dump_ld_config.c
+
+rpmlibexec_PROGRAMS +=	mkset
+mkset_SOURCES =		tools/mkset.c
+mkset_LDADD =		lib/librpm.la
+
 bin_PROGRAMS +=		rpmgraph
 rpmgraph_SOURCES =	tools/rpmgraph.c
 rpmgraph_LDADD =	lib/librpm.la rpmio/librpmio.la @WITH_POPT_LIB@
