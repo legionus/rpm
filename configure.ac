@@ -1074,5 +1074,8 @@ AC_CONFIG_FILES([Makefile
  	tests/Makefile
  	plugins/Makefile
 	python/setup.py
+	scripts/ldd
+	scripts/lib.prov
+	scripts/lib.req
   ])
 AC_OUTPUT

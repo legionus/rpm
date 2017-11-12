@@ -78,6 +78,9 @@ Makefile.in.in
 /rpmspec
 /dump_ld_config
 /mkset
+scripts/ldd
+scripts/lib.prov
+scripts/lib.req
 /scripts/macros.perl
 /scripts/macros.php
 /scripts/macros.python

@@ -1,0 +1,3 @@
+%__lib_provides	%{_rpmconfigdir}/lib.prov
+%__lib_requires	%{_rpmconfigdir}/lib.req
+%__lib_magic	^((setuid,? )?(setgid,? )?(sticky )?ELF .*|symbolic link to)

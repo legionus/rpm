@@ -1,0 +1,150 @@
+#!/bin/sh -efu
+#
+# Copyright (C) 2000-2006  Dmitry V. Levin <ldv@altlinux.org>
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+#
+
+. @RPMCONFIGDIR@/functions
+
+dump_ld_config='@RPMCONFIGDIR@/dump_ld_config'
+
+[ -n "${RPM_LIBDIR-}" ] || RPM_LIBDIR=`rpm --eval %_libdir`
+[ -n "${RPM_LIB-}" ] || RPM_LIB=`rpm --eval %_lib`
+
+DEF_RPM_FINDPROV_LIB_PATH="/$RPM_LIB $RPM_LIBDIR $("$dump_ld_config")"
+[ -z "${RPM_BUILD_ROOT-}" ] ||
+DEF_RPM_FINDPROV_LIB_PATH="$("$dump_ld_config" '' "$RPM_BUILD_ROOT") $DEF_RPM_FINDPROV_LIB_PATH"
+DEF_RPM_FINDPROV_LIB_PATH="$(IFS="$IFS:"; echo '' $DEF_RPM_FINDPROV_LIB_PATH '')"
+Debug "DEF_RPM_FINDPROV_LIB_PATH=$DEF_RPM_FINDPROV_LIB_PATH"
+
+RPM_FINDPROV_LIB_PATH="$(IFS="$IFS:"; echo '' ${RPM_FINDPROV_LIB_PATH-} $DEF_RPM_FINDPROV_LIB_PATH '')"
+Debug "RPM_FINDPROV_LIB_PATH=$RPM_FINDPROV_LIB_PATH"
+
+LibProv()
+{
+	local f="$1" fname dir basename
+	fname=${f#${RPM_BUILD_ROOT-}}
+	dir=${fname%/*}
+	basename=${fname##*/}
+
+	# Check library location.
+	[ -n "$dir" ] && [ -n "$basename" ] || return 0
+	[ "$dir" = "/$RPM_LIB/security" ] || [ -z "${RPM_FINDPROV_LIB_PATH##* $dir *}" ] || return 0
+
+	# Obtain objdump info.
+	local dump
+	if ! dump=$(objdump -p "$f"); then
+		Warning "$f: objdump failed"
+		return 0
+	fi
+
+	# Special case for PAM plugins.
+	if [ "$dir" = "/$RPM_LIB/security" ]; then
+		#printf 'PAM(%s)\n' "$basename"
+		return 0
+	fi
+
+	local soname suffix braces
+	soname=$(printf %s\\n "$dump" |sed -ne 's/^[[:space:]]*SONAME[[:space:]]\+\([^[:space:]]\+\)[[:space:]]*$/\1/p')
+	suffix=$(printf %s\\n "$dump" |sed -ne 's/^.*file format \(elf64\).*$/(64bit)/p')
+	[ -z "$suffix" ] && braces= || braces='()'
+
+	# For libraries with soname, ignore all but files named as soname.
+	[ -z "$soname" ] || [ "$soname" = "$basename" ] || return 0
+
+	# Treat symlinks specially.
+	if [ -L "$f" ]; then
+		[ -n "$soname" ] || return 0
+		# Ignore symlinks leading out of buildroot.
+		local realpath
+		realpath=$(readlink -fv "$f")
+		[ -z "${realpath##${RPM_BUILD_ROOT-}/*}" ] || return 0
+		# Ignore symlinks to shorter locations.
+		local realdir
+		realdir=${realpath##${RPM_BUILD_ROOT-}}
+		realdir=${realdir%/*}
+		[ "${#dir}" -le "${#realdir}" ] || return 0
+	fi
+
+	# soname is either empty or equal to basename, so...
+	soname=$basename
+
+	# Check for non-default path.
+	local provdir=
+	[ -z "${DEF_RPM_FINDPROV_LIB_PATH##* $dir *}" ] || provdir=$dir/
+
+	# Output version definitions.
+	printf %s\\n "$dump" |
+	sed -n '/^Version definitions:$/,/^$/{/^[0-9]/p}' |
+	awk -v provdir="$provdir" -v soname="$soname" -v suffix="$suffix" \
+		'NF==4 && $4!=soname {printf "%s%s(%s)%s\n", provdir, soname, $4, suffix}'
+
+	# Do main provides entry.
+	local provname="$provdir$soname$braces$suffix"
+	ENABLE_SET_VERSIONS=1
+	if [ -z "$ENABLE_SET_VERSIONS" ]; then
+		printf '%s\n' "$provname"
+		return 0
+	fi
+	local sym="$(ProvidedSymbols "$f")"
+	if [ -n "$sym" ]; then
+		local n bpp set
+		n=$(printf '%s\n' "$sym" |wc -l)
+		Verbose "$f: $n symbols"
+		bpp=$(SuggestBPP "$n")
+		set=$(printf '%s\n' "$sym" |@RPMCONFIGDIR@/mkset "$bpp")
+		printf '%s = %s\n' "$provname" "$set"
+	else
+		Warning "$f: no symbols"
+		printf '%s\n' "$provname"
+	fi
+}
+
+ProvidedSymbols()
+{
+	readelf --wide --dyn-syms "$1" |
+	awk '+$1 && NF>=8 &&
+		# dl-lookup.c: /st_value
+		($2!="00000000" && $2!="0000000000000000" || $4=="TLS") &&
+		# dl-lookup.c: /st_shndx
+		($7!="UND") &&
+		# dl-lookup.c: /ALLOWED_STT
+		($4=="NOTYPE" || $4=="OBJECT" || $4 == "FUNC" || $4=="COMMON" || $4=="TLS" || $4=="IFUNC") &&
+		# dl-lookup.c: /hidden
+		($6=="DEFAULT" || $6=="PROTECTED") &&
+		# dl-lookup.c: /switch.*ST_BIND
+		($5=="GLOBAL" || $5=="WEAK" || $5 == "UNIQUE") &&
+		# Ignore special symbols found in each library:
+		($8!="__bss_start" && $8!="_edata" && $8!="_end" && $8!="_fini" && $8!="_init") {
+			sym = $8
+			# No symbol versioning yet.
+			ix = index(sym, "@")
+			if (ix > 1)
+				sym = substr(sym, 0, ix-1)
+			print sym
+		}' |
+	LC_ALL=C sort -u
+}
+
+while read -r f; do
+	t="$(file -L -- "$f")"
+	case " $t" in
+		*' ELF '*' shared object, no machine, '*)
+			continue ;;
+		*' ELF '*' shared object, '*)
+			LibProv "$f" ;;
+	esac
+done
